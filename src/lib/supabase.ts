@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { Transaction, Goal, User, BudgetSettings, Category } from '../types';
 
 // ─── Config — replace with your values ───────────────────────────────────────
-const SUPABASE_URL  = 'https://awkydrtviqdpdhoxqbpm.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3a3lkcnR2aXFkcGRob3hxYnBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1Njk3NTcsImV4cCI6MjA5MzE0NTc1N30.55qbYCrptzPLJUuDrQdtpTXyObqcWb-fKmoR5vLX3p4';
+const SUPABASE_URL  = 'eror';
+const SUPABASE_ANON = 'eror';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
   auth: {
