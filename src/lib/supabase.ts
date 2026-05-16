@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { Transaction, Goal, User, BudgetSettings, Category } from '../types';
 
-// ─── Config — replace with your values ───────────────────────────────────────
+// ─── Điền thông tin Supabase của bạn vào đây ──────────────────────────────────
 const SUPABASE_URL  = 'https://awkydrtviqdpdhoxqbpm.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3a3lkcnR2aXFkcGRob3hxYnBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1Njk3NTcsImV4cCI6MjA5MzE0NTc1N30.55qbYCrptzPLJUuDrQdtpTXyObqcWb-fKmoR5vLX3p4';
 
@@ -39,25 +39,21 @@ export const AuthService = {
   },
 };
 
-// ─── DB row types (matches migration.sql) ────────────────────────────────────
+// ─── DB Types ─────────────────────────────────────────────────────────────────
 interface DbProfile {
   id: string; name: string; email: string; avatar: string;
   pin_hash: string | null; biometric_enabled: boolean;
   two_factor_enabled: boolean; created_at: string;
 }
-
-// NOTE: uses txn_type, display_date, txn_timestamp — all safe names
 interface DbTransaction {
   id: string; user_id: string; name: string; amt: number;
   cat: Category; txn_type: 'exp' | 'inc';
   display_date: string; txn_timestamp: number; created_at: string;
 }
-
 interface DbGoal {
   id: string; user_id: string; name: string;
   target_amt: number; saved_amt: number; emoji: string; created_at: string;
 }
-
 interface DbBudget {
   id: string; user_id: string; total_amt: number;
   category_limits: Record<Category, number>; updated_at: string;
@@ -66,13 +62,11 @@ interface DbBudget {
 // ─── Profile ──────────────────────────────────────────────────────────────────
 export const ProfileService = {
   async get(userId: string): Promise<User | null> {
-    const { data, error } = await supabase
-      .from('profiles').select('*').eq('id', userId).single();
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (error) return null;
     const r = data as DbProfile;
     return {
       id: r.id, name: r.name, email: r.email, avatar: r.avatar,
-      pin: r.pin_hash || undefined,
       biometricEnabled: r.biometric_enabled,
       twoFactorEnabled: r.two_factor_enabled,
       createdAt: new Date(r.created_at).getTime(),
@@ -93,23 +87,17 @@ export const ProfileService = {
     const { error } = await supabase.from('profiles').update(patch).eq('id', userId);
     if (error) throw error;
   },
-  async updatePin(userId: string, pin: string): Promise<void> {
-    const { error } = await supabase.from('profiles').update({ pin_hash: pin }).eq('id', userId);
-    if (error) throw error;
-  },
 };
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
 export const TransactionService = {
   async getAll(userId: string): Promise<Transaction[]> {
-    const { data, error } = await supabase
-      .from('transactions').select('*')
+    const { data, error } = await supabase.from('transactions').select('*')
       .eq('user_id', userId).order('txn_timestamp', { ascending: false });
     if (error) throw error;
     return (data as DbTransaction[]).map(r => ({
-      id: r.id, name: r.name, amt: r.amt,
-      cat: r.cat, type: r.txn_type,
-      date: r.display_date, timestamp: r.txn_timestamp,
+      id: r.id, name: r.name, amt: r.amt, cat: r.cat,
+      type: r.txn_type, date: r.display_date, timestamp: r.txn_timestamp,
     }));
   },
   async insert(userId: string, txn: Transaction): Promise<void> {
@@ -124,11 +112,7 @@ export const TransactionService = {
     const { error } = await supabase.from('transactions').delete().eq('id', id);
     if (error) throw error;
   },
-  subscribe(
-    userId: string,
-    onInsert: (t: Transaction) => void,
-    onDelete: (id: string) => void,
-  ) {
+  subscribe(userId: string, onInsert: (t: Transaction) => void, onDelete: (id: string) => void) {
     return supabase.channel(`txns:${userId}`)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` },
@@ -147,8 +131,7 @@ export const TransactionService = {
 // ─── Goals ────────────────────────────────────────────────────────────────────
 export const GoalService = {
   async getAll(userId: string): Promise<Goal[]> {
-    const { data, error } = await supabase
-      .from('goals').select('*').eq('user_id', userId).order('created_at');
+    const { data, error } = await supabase.from('goals').select('*').eq('user_id', userId);
     if (error) throw error;
     return (data as DbGoal[]).map(r => ({
       id: r.id, name: r.name, target: r.target_amt,
@@ -176,8 +159,7 @@ export const GoalService = {
 // ─── Budget ───────────────────────────────────────────────────────────────────
 export const BudgetService = {
   async get(userId: string): Promise<BudgetSettings | null> {
-    const { data, error } = await supabase
-      .from('budgets').select('*').eq('user_id', userId).single();
+    const { data, error } = await supabase.from('budgets').select('*').eq('user_id', userId).single();
     if (error) return null;
     const r = data as DbBudget;
     return { total: r.total_amt, categoryLimits: r.category_limits };

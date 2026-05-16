@@ -242,7 +242,6 @@ export function AppProvider({ children }: { children:ReactNode }) {
   async function setupPin(pin:string) {
     dispatch({ type:'UPDATE_USER', payload:{ pin } });
     dispatch({ type:'PIN_SETUP_DONE' });
-    if (state.user) ProfileService.updatePin(state.user.id, pin).catch(console.warn);
   }
 
   async function enableTwoFactor(enabled:boolean) {

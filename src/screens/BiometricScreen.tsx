@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
-  Alert, ActivityIndicator, Platform,
+  View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useApp } from '../context/AppContext';
 import { COLORS } from '../utils/constants';
@@ -10,71 +10,28 @@ import { RootStackParamList } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-// ─── react-native-biometrics wrapper ────────────────────────────────────────
-// Install: npm install react-native-biometrics
-// iOS: add NSFaceIDUsageDescription to Info.plist
-// Android: add USE_BIOMETRIC, USE_FINGERPRINT permissions
-let ReactNativeBiometrics: any = null;
-try {
-  ReactNativeBiometrics = require('react-native-biometrics').default;
-} catch {
-  // Library not installed — will show install guide
-}
-
-type BiometryType = 'TouchID' | 'FaceID' | 'Biometrics' | 'none';
-
 interface BiometricInfo {
   available: boolean;
-  biometryType: BiometryType;
+  types: LocalAuthentication.AuthenticationType[];
   label: string;
   icon: string;
 }
 
-async function checkBiometricAvailability(): Promise<BiometricInfo> {
-  if (!ReactNativeBiometrics) {
-    return { available: false, biometryType: 'none', label: 'Chưa cài thư viện', icon: '❌' };
+function getLabel(types: LocalAuthentication.AuthenticationType[]): { label: string; icon: string } {
+  if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+    return { label: 'Face ID', icon: '👁' };
   }
-  try {
-    const rnBiometrics = new ReactNativeBiometrics({ allowDeviceCredentials: true });
-    const { available, biometryType } = await rnBiometrics.isSensorAvailable();
-    const labelMap: Record<string, string> = {
-      TouchID:    'Touch ID',
-      FaceID:     'Face ID',
-      Biometrics: 'Sinh trắc học',
-    };
-    const iconMap: Record<string, string> = {
-      TouchID:    '👆',
-      FaceID:     '👁',
-      Biometrics: '🔏',
-    };
-    return {
-      available,
-      biometryType: (biometryType ?? 'none') as BiometryType,
-      label: labelMap[biometryType ?? ''] ?? 'Không hỗ trợ',
-      icon:  iconMap[biometryType ?? ''] ?? '❌',
-    };
-  } catch {
-    return { available: false, biometryType: 'none', label: 'Lỗi kiểm tra', icon: '❌' };
+  if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+    return { label: 'Vân tay', icon: '👆' };
   }
+  return { label: 'Sinh trắc học', icon: '🔏' };
 }
 
-async function promptBiometric(reason: string): Promise<boolean> {
-  if (!ReactNativeBiometrics) return false;
-  try {
-    const rnBiometrics = new ReactNativeBiometrics({ allowDeviceCredentials: true });
-    const { success } = await rnBiometrics.simplePrompt({ promptMessage: reason });
-    return success;
-  } catch {
-    return false;
-  }
-}
-
-// ─── Screen ──────────────────────────────────────────────────────────────────
 export function BiometricScreen({ navigation }: { navigation: Nav }) {
   const { state, dispatch, enableTwoFactor } = useApp();
   const user = state.user!;
 
-  const [info, setInfo] = useState<BiometricInfo | null>(null);
+  const [info, setInfo]         = useState<BiometricInfo | null>(null);
   const [checking, setChecking] = useState(true);
   const [enabling, setEnabling] = useState(false);
   const [bioEnabled, setBioEnabled] = useState(user.biometricEnabled);
@@ -82,8 +39,11 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
 
   useEffect(() => {
     (async () => {
-      const result = await checkBiometricAvailability();
-      setInfo(result);
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled   = await LocalAuthentication.isEnrolledAsync();
+      const types      = await LocalAuthentication.supportedAuthenticationTypesAsync();
+      const { label, icon } = getLabel(types);
+      setInfo({ available: compatible && enrolled, types, label, icon });
       setChecking(false);
     })();
   }, []);
@@ -99,11 +59,16 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
     }
     setEnabling(true);
     try {
-      const ok = await promptBiometric(`Xác nhận để bật ${info.label}`);
-      if (ok) {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: `Xác nhận để bật ${info.label}`,
+        fallbackLabel: 'Dùng mã PIN',
+        cancelLabel: 'Huỷ',
+        disableDeviceFallback: false,
+      });
+      if (result.success) {
         dispatch({ type: 'UPDATE_USER', payload: { biometricEnabled: true } });
         setBioEnabled(true);
-        Alert.alert('✅ Đã bật', `${info.label} sẽ được dùng thay thế mã PIN khi đăng nhập.`);
+        Alert.alert('✅ Đã bật', `${info.label} sẽ dùng để xác thực khi đăng nhập.`);
       } else {
         Alert.alert('Thất bại', 'Xác thực không thành công. Vui lòng thử lại.');
       }
@@ -113,29 +78,43 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
   }
 
   async function handleDisableBio() {
-    Alert.alert(
-      `Tắt ${info?.label ?? 'sinh trắc học'}`,
-      'Bạn sẽ cần dùng mã PIN để đăng nhập.',
-      [
-        { text: 'Huỷ', style: 'cancel' },
-        {
-          text: 'Tắt',
-          style: 'destructive',
-          onPress: () => {
-            dispatch({ type: 'UPDATE_USER', payload: { biometricEnabled: false } });
-            setBioEnabled(false);
-          },
+    Alert.alert(`Tắt ${info?.label ?? 'sinh trắc học'}`, 'Bạn sẽ cần mã PIN để đăng nhập.', [
+      { text: 'Huỷ', style: 'cancel' },
+      {
+        text: 'Tắt',
+        style: 'destructive',
+        onPress: () => {
+          dispatch({ type: 'UPDATE_USER', payload: { biometricEnabled: false } });
+          setBioEnabled(false);
         },
-      ],
-    );
+      },
+    ]);
   }
 
-  // ── 2FA toggle ────────────────────────────────────────────────────────────
-  async function handleToggle2FA() {
+  async function handleTest() {
+    if (!info?.available) { Alert.alert('Không khả dụng'); return; }
+    setEnabling(true);
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Thử xác thực sinh trắc học',
+        fallbackLabel: 'Dùng mã PIN',
+        cancelLabel: 'Huỷ',
+      });
+      Alert.alert(
+        result.success ? '✅ Thành công' : '❌ Thất bại',
+        result.success ? 'Sinh trắc học hoạt động bình thường!' : 'Xác thực không thành công.',
+      );
+    } finally {
+      setEnabling(false);
+    }
+  }
+
+  // ── 2FA ───────────────────────────────────────────────────────────────────
+  function handleToggle2FA() {
     if (!twoFAEnabled) {
       Alert.alert(
         'Bật bảo mật 2 lớp (2FA)',
-        `Khi đăng nhập:\n1️⃣ Nhập email + mật khẩu\n2️⃣ Nhập mã OTP gửi về ${user.email}\n\nBạn có muốn bật không?`,
+        `Khi đăng nhập:\n1️⃣ Nhập email + mật khẩu\n2️⃣ Nhập mã PIN 6 số\n3️⃣ Xác nhận OTP qua email: ${user.email}\n\nBạn có muốn bật không?`,
         [
           { text: 'Huỷ', style: 'cancel' },
           {
@@ -143,16 +122,13 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
             onPress: async () => {
               await enableTwoFactor(true);
               setTwoFAEnabled(true);
-              Alert.alert(
-                '✅ 2FA đã bật',
-                'Từ lần đăng nhập tiếp theo, Supabase Auth sẽ yêu cầu OTP qua email của bạn.',
-              );
+              Alert.alert('✅ 2FA đã bật', 'Từ lần đăng nhập tiếp theo sẽ yêu cầu OTP qua email.');
             },
           },
         ],
       );
     } else {
-      Alert.alert('Tắt 2FA', 'Tài khoản sẽ kém bảo mật hơn. Chắc chắn tắt?', [
+      Alert.alert('Tắt 2FA', 'Tài khoản sẽ kém bảo mật hơn.', [
         { text: 'Giữ nguyên', style: 'cancel' },
         {
           text: 'Tắt 2FA',
@@ -166,17 +142,6 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
     }
   }
 
-  // ── Test biometric ────────────────────────────────────────────────────────
-  async function handleTest() {
-    setEnabling(true);
-    try {
-      const ok = await promptBiometric('Thử xác thực sinh trắc học');
-      Alert.alert(ok ? '✅ Thành công' : '❌ Thất bại', ok ? 'Xác thực sinh trắc học hoạt động!' : 'Xác thực không thành công.');
-    } finally {
-      setEnabling(false);
-    }
-  }
-
   if (checking) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -185,8 +150,6 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
       </View>
     );
   }
-
-  const libInstalled = !!ReactNativeBiometrics;
 
   return (
     <View style={s.screen}>
@@ -198,36 +161,23 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
       </View>
 
       <View style={s.body}>
-        {/* Library install guide if not installed */}
-        {!libInstalled && (
-          <View style={s.installBanner}>
-            <Text style={s.installTitle}>📦 Cần cài thư viện</Text>
-            <Text style={s.installCode}>npm install react-native-biometrics</Text>
-            <Text style={s.installNote}>
-              iOS: thêm NSFaceIDUsageDescription vào Info.plist{'\n'}
-              Android: thêm quyền USE_BIOMETRIC trong AndroidManifest.xml
-            </Text>
-          </View>
-        )}
-
         {/* Biometric card */}
         <View style={s.card}>
-          <View style={s.cardHeader}>
+          <View style={s.cardHdr}>
             <Text style={{ fontSize: 32 }}>{info?.icon ?? '🔏'}</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={s.cardTitle}>{info?.label ?? 'Sinh trắc học'}</Text>
               <Text style={s.cardSub}>
                 {info?.available
-                  ? `${info.biometryType} sẵn sàng trên thiết bị này`
+                  ? 'Sẵn sàng trên thiết bị này'
                   : 'Thiết bị không hỗ trợ hoặc chưa thiết lập'}
               </Text>
             </View>
-            <View style={[s.statusDot, { backgroundColor: info?.available ? COLORS.success : '#ccc' }]} />
+            <View style={[s.dot, { backgroundColor: info?.available ? COLORS.success : '#ccc' }]} />
           </View>
 
           <View style={s.divider} />
 
-          {/* Status */}
           <View style={s.statusRow}>
             <Text style={s.statusLbl}>Trạng thái:</Text>
             <View style={[s.statusBadge, { backgroundColor: bioEnabled ? '#EDFAF3' : '#FFF0F0' }]}>
@@ -237,48 +187,47 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
             </View>
           </View>
 
-          {/* Actions */}
-          <View style={s.actionRow}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
             {!bioEnabled ? (
               <TouchableOpacity
-                style={[s.actionBtn, s.actionBtnPrimary, !info?.available && s.actionBtnDisabled]}
+                style={[s.btn, s.btnPrimary, !info?.available && s.btnDisabled, { flex: 1 }]}
                 onPress={handleEnableBio}
                 disabled={enabling || !info?.available}
               >
                 {enabling
                   ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={s.actionBtnPrimaryTxt}>Bật {info?.label}</Text>}
+                  : <Text style={s.btnPrimaryTxt}>Bật {info?.label}</Text>}
               </TouchableOpacity>
             ) : (
-              <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
-                <TouchableOpacity style={[s.actionBtn, s.actionBtnSecondary, { flex: 1 }]} onPress={handleTest} disabled={enabling}>
-                  <Text style={s.actionBtnSecondaryTxt}>🧪 Thử nghiệm</Text>
+              <>
+                <TouchableOpacity style={[s.btn, s.btnSecondary, { flex: 1 }]} onPress={handleTest} disabled={enabling}>
+                  <Text style={s.btnSecondaryTxt}>🧪 Thử</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.actionBtn, s.actionBtnDanger, { flex: 1 }]} onPress={handleDisableBio}>
-                  <Text style={s.actionBtnDangerTxt}>Tắt</Text>
+                <TouchableOpacity style={[s.btn, s.btnDanger, { flex: 1 }]} onPress={handleDisableBio}>
+                  <Text style={s.btnDangerTxt}>Tắt</Text>
                 </TouchableOpacity>
-              </View>
+              </>
             )}
           </View>
         </View>
 
         {/* 2FA card */}
         <View style={s.card}>
-          <View style={s.cardHeader}>
+          <View style={s.cardHdr}>
             <Text style={{ fontSize: 32 }}>🛡</Text>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <Text style={s.cardTitle}>Bảo mật 2 lớp (2FA)</Text>
               <Text style={s.cardSub}>OTP qua email sau mỗi lần đăng nhập</Text>
             </View>
-            <View style={[s.statusDot, { backgroundColor: twoFAEnabled ? COLORS.success : '#ccc' }]} />
+            <View style={[s.dot, { backgroundColor: twoFAEnabled ? COLORS.success : '#ccc' }]} />
           </View>
 
           <View style={s.divider} />
 
-          <View style={s.twoFAInfo}>
-            <Text style={s.twoFAStep}>1️⃣  Nhập email + mật khẩu</Text>
-            <Text style={s.twoFAStep}>2️⃣  Nhập mã PIN 6 số</Text>
-            <Text style={s.twoFAStep}>3️⃣  Xác nhận OTP gửi về email</Text>
+          <View style={{ gap: 6, marginBottom: 14 }}>
+            <Text style={s.step}>1️⃣  Nhập email + mật khẩu</Text>
+            <Text style={s.step}>2️⃣  Nhập mã PIN 6 số</Text>
+            <Text style={s.step}>3️⃣  Xác nhận OTP gửi về email</Text>
           </View>
 
           <View style={s.statusRow}>
@@ -291,20 +240,18 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
           </View>
 
           <TouchableOpacity
-            style={[s.actionBtn, twoFAEnabled ? s.actionBtnDanger : s.actionBtnPrimary]}
+            style={[s.btn, twoFAEnabled ? s.btnDanger : s.btnPrimary]}
             onPress={handleToggle2FA}
           >
-            <Text style={twoFAEnabled ? s.actionBtnDangerTxt : s.actionBtnPrimaryTxt}>
+            <Text style={twoFAEnabled ? s.btnDangerTxt : s.btnPrimaryTxt}>
               {twoFAEnabled ? 'Tắt 2FA' : 'Bật bảo mật 2 lớp'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Info note */}
         <View style={s.note}>
           <Text style={s.noteTxt}>
-            🔒 Khi bật cả hai, thứ tự xác thực là:{'\n'}
-            Sinh trắc học → PIN → 2FA (OTP email){'\n\n'}
+            🔒 Thứ tự xác thực: Sinh trắc học → PIN → OTP email{'\n\n'}
             Dữ liệu sinh trắc học không rời khỏi thiết bị của bạn.
           </Text>
         </View>
@@ -315,52 +262,30 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.bg },
-  hdr: {
-    backgroundColor: COLORS.dark, padding: 20, paddingTop: 56,
-    paddingBottom: 20, flexDirection: 'row', alignItems: 'center',
-  },
+  hdr: { backgroundColor: COLORS.dark, padding: 20, paddingTop: 56, paddingBottom: 20, flexDirection: 'row', alignItems: 'center' },
   back: { marginRight: 12 },
   backTxt: { color: 'rgba(255,255,255,0.7)', fontSize: 20 },
   hdrTtl: { fontSize: 20, fontWeight: '700', color: '#fff' },
   body: { padding: 16, gap: 14 },
-  installBanner: {
-    backgroundColor: '#FFF3CD', borderRadius: 14, padding: 14,
-    borderLeftWidth: 4, borderLeftColor: '#FFC107',
-  },
-  installTitle: { fontSize: 14, fontWeight: '700', color: '#856404', marginBottom: 6 },
-  installCode: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    backgroundColor: '#FFF8E1', padding: 8, borderRadius: 8,
-    fontSize: 13, color: '#5D4037', marginBottom: 8,
-  },
-  installNote: { fontSize: 12, color: '#856404', lineHeight: 18 },
-  card: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
-  },
-  cardHeader: { flexDirection: 'row', alignItems: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
+  cardHdr: { flexDirection: 'row', alignItems: 'center' },
   cardTitle: { fontSize: 16, fontWeight: '700', color: COLORS.dark },
   cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
-  statusDot: { width: 12, height: 12, borderRadius: 6 },
+  dot: { width: 12, height: 12, borderRadius: 6 },
   divider: { height: 0.5, backgroundColor: '#f0f0f0', marginVertical: 14 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
   statusLbl: { fontSize: 13, color: COLORS.textSecondary },
   statusBadge: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4 },
   statusTxt: { fontSize: 13, fontWeight: '600' },
-  actionRow: { flexDirection: 'row' },
-  actionBtn: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
-  actionBtnPrimary: { backgroundColor: COLORS.primary, flex: 1 },
-  actionBtnPrimaryTxt: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  actionBtnSecondary: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: '#eee' },
-  actionBtnSecondaryTxt: { color: COLORS.dark, fontSize: 13, fontWeight: '500' },
-  actionBtnDanger: { backgroundColor: '#FFF0F0', borderWidth: 1, borderColor: '#FFCDD2', flex: 1 },
-  actionBtnDangerTxt: { color: COLORS.danger, fontSize: 14, fontWeight: '600' },
-  actionBtnDisabled: { opacity: 0.4 },
-  twoFAInfo: { gap: 6, marginBottom: 14 },
-  twoFAStep: { fontSize: 13, color: COLORS.textSecondary, lineHeight: 20 },
-  note: {
-    backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14,
-  },
+  btn: { borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  btnPrimary: { backgroundColor: COLORS.primary },
+  btnPrimaryTxt: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  btnSecondary: { backgroundColor: COLORS.bg, borderWidth: 1, borderColor: '#eee' },
+  btnSecondaryTxt: { color: COLORS.dark, fontSize: 13, fontWeight: '500' },
+  btnDanger: { backgroundColor: '#FFF0F0', borderWidth: 1, borderColor: '#FFCDD2' },
+  btnDangerTxt: { color: COLORS.danger, fontSize: 14, fontWeight: '600' },
+  btnDisabled: { opacity: 0.4 },
+  step: { fontSize: 13, color: COLORS.textSecondary, lineHeight: 20 },
+  note: { backgroundColor: '#E8F5E9', borderRadius: 14, padding: 14 },
   noteTxt: { fontSize: 12, color: '#2E7D32', lineHeight: 20 },
 });

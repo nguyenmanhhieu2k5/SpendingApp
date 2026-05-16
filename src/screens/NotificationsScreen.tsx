@@ -1,84 +1,115 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, Platform, Switch, AppState,
+  View, Text, StyleSheet, FlatList,
+  TouchableOpacity, Switch, Alert, Platform,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useApp } from '../context/AppContext';
 import { COLORS } from '../utils/constants';
 import { generateId } from '../utils/helpers';
 import { RootStackParamList } from '../types';
 
-// ─── Local Notification helpers (using setTimeout — no extra lib needed) ──────
-// For production: swap these with @notifee/react-native calls
-let scheduledTimers: ReturnType<typeof setTimeout>[] = [];
-
-function scheduleLocalNotif(title: string, body: string, delayMs: number) {
-  const t = setTimeout(() => {
-    // In real device with @notifee: notifee.displayNotification(...)
-    // Here we dispatch to in-app notification list via the callback
-    localNotifCallback?.(title, body);
-  }, delayMs);
-  scheduledTimers.push(t);
-}
-
-function cancelAllScheduled() {
-  scheduledTimers.forEach(clearTimeout);
-  scheduledTimers = [];
-}
-
-let localNotifCallback: ((title: string, body: string) => void) | null = null;
-
-// ─── Reminder schedule ────────────────────────────────────────────────────────
-function getMsUntilHour(hour: number): number {
-  const now = new Date();
-  const target = new Date();
-  target.setHours(hour, 0, 0, 0);
-  if (target <= now) target.setDate(target.getDate() + 1);
-  return target.getTime() - now.getTime();
-}
-
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+// ─── Expo Notifications config ────────────────────────────────────────────────
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+async function requestPermission(): Promise<boolean> {
+  if (!Device.isDevice) return false; // Expo Go on simulator won't get push
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  if (existing === 'granted') return true;
+  const { status } = await Notifications.requestPermissionsAsync();
+  return status === 'granted';
+}
+
+async function scheduleDaily(hour: number, minute: number = 0): Promise<string | null> {
+  try {
+    const id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '💰 Nhắc nhở chi tiêu',
+        body: 'Đừng quên ghi nhận chi tiêu hôm nay!',
+        sound: true,
+        data: { type: 'daily_reminder' },
+      },
+     trigger: {
+  type: Notifications.SchedulableTriggerInputTypes.DAILY,
+  hour: 20,
+  minute: 0,
+  repeats: true,
+}as Notifications.DailyTriggerInput,
+    });
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+async function cancelAllScheduled() {
+  await Notifications.cancelAllScheduledNotificationsAsync();
+}
+
+async function sendTestNotification() {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: '🧪 Thông báo thử nghiệm',
+      body: 'Hệ thống thông báo SpendingApp hoạt động bình thường!',
+      sound: true,
+    },
+    trigger: { seconds: 2 } as Notifications.TimeIntervalTriggerInput,
+  });
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 export function NotificationsScreen({ navigation }: { navigation: Nav }) {
   const { state, dispatch } = useApp();
-  const [dailyReminder, setDailyReminder] = useState(true);
-  const [budgetAlert, setBudgetAlert] = useState(true);
-  const [goalAlert, setGoalAlert] = useState(true);
-  const [reminderHour, setReminderHour] = useState(20); // 8pm default
-  const appState = useRef(AppState.currentState);
 
-  // Register callback to push local notifs into app notification list
+  const [permGranted,   setPermGranted]   = useState(false);
+  const [dailyEnabled,  setDailyEnabled]  = useState(true);
+  const [budgetEnabled, setBudgetEnabled] = useState(true);
+  const [goalEnabled,   setGoalEnabled]   = useState(true);
+  const [reminderHour,  setReminderHour]  = useState(20);
+  const scheduledId = useRef<string | null>(null);
+
+  // Request permission on mount
   useEffect(() => {
-    localNotifCallback = (title: string, body: string) => {
+    requestPermission().then(setPermGranted);
+
+    // Listen for foreground notifications → add to in-app list
+    const sub = Notifications.addNotificationReceivedListener(notif => {
       dispatch({
         type: 'ADD_NOTIFICATION',
         payload: {
           id: generateId(),
-          title,
-          body,
-          time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          title: notif.request.content.title ?? 'Thông báo',
+          body:  notif.request.content.body  ?? '',
+          time:  new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
           color: COLORS.primary,
-          read: false,
+          read:  false,
         },
       });
-    };
-    return () => { localNotifCallback = null; };
+    });
+    return () => sub.remove();
   }, []);
 
-  // Schedule daily reminder when toggled on
+  // Re-schedule when daily settings change
   useEffect(() => {
-    cancelAllScheduled();
-    if (dailyReminder) {
-      const delay = getMsUntilHour(reminderHour);
-      scheduleLocalNotif(
-        '💰 Nhắc nhở chi tiêu',
-        'Đừng quên ghi nhận chi tiêu hôm nay!',
-        delay,
-      );
-    }
-    return cancelAllScheduled;
-  }, [dailyReminder, reminderHour]);
+    (async () => {
+      await cancelAllScheduled();
+      if (dailyEnabled && permGranted) {
+        scheduledId.current = await scheduleDaily(reminderHour);
+      }
+    })();
+  }, [dailyEnabled, reminderHour, permGranted]);
 
   const unread = state.notifications.filter(n => !n.read).length;
 
@@ -92,16 +123,33 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
     });
   }
 
-  function testNotif() {
-    scheduleLocalNotif('🧪 Thông báo thử', 'Hệ thống thông báo hoạt động bình thường!', 500);
-    Alert.alert('Đã gửi', 'Thông báo thử sẽ xuất hiện sau 0.5 giây.');
+  async function handleTest() {
+    if (!permGranted) {
+      Alert.alert('Cần quyền thông báo', 'Vui lòng cấp quyền thông báo trong Cài đặt.');
+      return;
+    }
+    await sendTestNotification();
+    Alert.alert('Đã gửi', 'Thông báo thử sẽ xuất hiện sau 2 giây.');
+  }
+
+  async function handleToggleDaily(val: boolean) {
+    if (val && !permGranted) {
+      const ok = await requestPermission();
+      if (!ok) {
+        Alert.alert('Bị từ chối', 'Vui lòng bật quyền thông báo trong Cài đặt điện thoại.');
+        return;
+      }
+      setPermGranted(true);
+    }
+    setDailyEnabled(val);
   }
 
   const HOURS = [6, 7, 8, 9, 18, 19, 20, 21, 22];
 
-  function hourLabel(h: number) {
-    return h < 12 ? `${h}:00 sáng` : h === 12 ? '12:00 trưa' : `${h - 12}:00 chiều`;
-  }
+  const listData = [
+    { type: 'settings' as const },
+    ...state.notifications.map(n => ({ type: 'notif' as const, data: n })),
+  ];
 
   return (
     <View style={s.screen}>
@@ -118,38 +166,44 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
         )}
       </View>
 
+      {!permGranted && (
+        <View style={s.permBanner}>
+          <Text style={s.permTxt}>
+            ⚠️ Chưa cấp quyền thông báo. Một số tính năng sẽ không hoạt động.
+          </Text>
+          <TouchableOpacity onPress={() => requestPermission().then(setPermGranted)}>
+            <Text style={s.permBtn}>Cấp quyền →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <FlatList
-        data={[{ type: 'settings' }, ...state.notifications.map(n => ({ type: 'notif', data: n }))]}
+        data={listData}
         keyExtractor={(item, i) => String(i)}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={s.empty}>
-            <Text style={{ fontSize: 40 }}>🔔</Text>
-            <Text style={s.emptyTxt}>Chưa có thông báo nào</Text>
-          </View>
-        }
-        renderItem={({ item }: any) => {
+        contentContainerStyle={{ padding: 16, gap: 8 }}
+        renderItem={({ item }) => {
           if (item.type === 'settings') {
             return (
-              <View style={s.settingsCard}>
-                <Text style={s.settingsTitle}>Cài đặt thông báo</Text>
+              <View style={s.settCard}>
+                <Text style={s.settTitle}>Cài đặt thông báo</Text>
 
-                {/* Daily reminder toggle */}
-                <View style={s.settingRow}>
+                {/* Daily reminder */}
+                <View style={s.settRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.settingLbl}>Nhắc ghi chi tiêu hàng ngày</Text>
-                    <Text style={s.settingSubLbl}>Tự động nhắc vào giờ bạn chọn</Text>
+                    <Text style={s.settLbl}>Nhắc ghi chi tiêu hàng ngày</Text>
+                    <Text style={s.settSub}>Tự động nhắc vào giờ bạn chọn</Text>
                   </View>
                   <Switch
-                    value={dailyReminder}
-                    onValueChange={setDailyReminder}
+                    value={dailyEnabled}
+                    onValueChange={handleToggleDaily}
                     trackColor={{ false: '#ddd', true: COLORS.primary }}
                     thumbColor="#fff"
                   />
                 </View>
 
-                {/* Hour picker — only show when daily reminder is on */}
-                {dailyReminder && (
+                {/* Hour picker */}
+                {dailyEnabled && (
                   <View style={s.hourWrap}>
                     <Text style={s.hourLbl}>Giờ nhắc nhở:</Text>
                     <View style={s.hourRow}>
@@ -168,50 +222,46 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
                   </View>
                 )}
 
-                {/* Budget alert toggle */}
-                <View style={s.settingRow}>
+                {/* Budget alert */}
+                <View style={s.settRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.settingLbl}>Cảnh báo ngân sách</Text>
-                    <Text style={s.settingSubLbl}>Khi chi tiêu vượt 90% hạn mức</Text>
+                    <Text style={s.settLbl}>Cảnh báo ngân sách</Text>
+                    <Text style={s.settSub}>Khi chi tiêu vượt 90% hạn mức</Text>
                   </View>
                   <Switch
-                    value={budgetAlert}
-                    onValueChange={setBudgetAlert}
+                    value={budgetEnabled}
+                    onValueChange={setBudgetEnabled}
                     trackColor={{ false: '#ddd', true: COLORS.warning }}
                     thumbColor="#fff"
                   />
                 </View>
 
-                {/* Goal alert toggle */}
-                <View style={s.settingRow}>
+                {/* Goal alert */}
+                <View style={s.settRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.settingLbl}>Cập nhật mục tiêu</Text>
-                    <Text style={s.settingSubLbl}>Khi mục tiêu đạt mốc quan trọng</Text>
+                    <Text style={s.settLbl}>Cập nhật mục tiêu</Text>
+                    <Text style={s.settSub}>Khi mục tiêu đạt mốc quan trọng</Text>
                   </View>
                   <Switch
-                    value={goalAlert}
-                    onValueChange={setGoalAlert}
+                    value={goalEnabled}
+                    onValueChange={setGoalEnabled}
                     trackColor={{ false: '#ddd', true: COLORS.success }}
                     thumbColor="#fff"
                   />
                 </View>
 
                 {/* Test button */}
-                <TouchableOpacity style={s.testBtn} onPress={testNotif}>
+                <TouchableOpacity style={s.testBtn} onPress={handleTest}>
                   <Text style={s.testTxt}>🧪 Gửi thông báo thử nghiệm</Text>
                 </TouchableOpacity>
 
-                {/* Divider */}
                 {state.notifications.length > 0 && (
-                  <Text style={[s.settingsTitle, { marginTop: 20 }]}>
-                    Lịch sử thông báo
-                  </Text>
+                  <Text style={[s.settTitle, { marginTop: 20 }]}>Lịch sử thông báo</Text>
                 )}
               </View>
             );
           }
 
-          // Notification item
           const n = item.data;
           return (
             <TouchableOpacity
@@ -221,9 +271,9 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
             >
               <View style={[s.notifDot, { backgroundColor: n.color }]} />
               <View style={{ flex: 1 }}>
-                <View style={s.notifHeader}>
+                <View style={s.notifHdr}>
                   <Text style={s.notifTitle}>{n.title}</Text>
-                  {!n.read && <View style={s.unreadBadge} />}
+                  {!n.read && <View style={s.unreadDot} />}
                 </View>
                 <Text style={s.notifBody}>{n.body}</Text>
                 <Text style={s.notifTime}>{n.time}</Text>
@@ -231,7 +281,6 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
             </TouchableOpacity>
           );
         }}
-        contentContainerStyle={{ padding: 16, gap: 8 }}
       />
     </View>
   );
@@ -251,19 +300,23 @@ const s = StyleSheet.create({
     borderRadius: 16, paddingHorizontal: 12, paddingVertical: 5,
   },
   markAllTxt: { fontSize: 12, color: '#fff', fontWeight: '500' },
-  settingsCard: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 4,
+  permBanner: {
+    backgroundColor: '#FFF3CD', padding: 12, margin: 16,
+    borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
   },
-  settingsTitle: {
+  permTxt: { flex: 1, fontSize: 12, color: '#856404' },
+  permBtn: { fontSize: 12, color: COLORS.primary, fontWeight: '600' },
+  settCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 4 },
+  settTitle: {
     fontSize: 12, fontWeight: '700', color: COLORS.textSecondary,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14,
   },
-  settingRow: {
+  settRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
     borderBottomWidth: 0.5, borderColor: '#f0f0f0',
   },
-  settingLbl: { fontSize: 14, fontWeight: '500', color: COLORS.dark },
-  settingSubLbl: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+  settLbl: { fontSize: 14, fontWeight: '500', color: COLORS.dark },
+  settSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
   hourWrap: { paddingVertical: 12, borderBottomWidth: 0.5, borderColor: '#f0f0f0' },
   hourLbl: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10 },
   hourRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -285,13 +338,9 @@ const s = StyleSheet.create({
   },
   notifUnread: { backgroundColor: COLORS.primaryLight },
   notifDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4, flexShrink: 0 },
-  notifHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
+  notifHdr: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
   notifTitle: { fontSize: 14, fontWeight: '600', color: COLORS.dark, flex: 1 },
-  unreadBadge: {
-    width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary,
-  },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.primary },
   notifBody: { fontSize: 13, color: COLORS.textSecondary, lineHeight: 18 },
   notifTime: { fontSize: 11, color: COLORS.textMuted, marginTop: 5 },
-  empty: { alignItems: 'center', paddingVertical: 40 },
-  emptyTxt: { fontSize: 14, color: COLORS.textMuted, marginTop: 12 },
 });
