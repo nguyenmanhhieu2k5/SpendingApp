@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Transaction, Goal, User, BudgetSettings, Category } from '../types';
 
 // ─── Điền thông tin Supabase của bạn vào đây ──────────────────────────────────
-const SUPABASE_URL  = 'https://awkydrtviqdpdhoxqbpm.supabase.co';
+export const SUPABASE_URL  = 'https://awkydrtviqdpdhoxqbpm.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3a3lkcnR2aXFkcGRob3hxYnBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1Njk3NTcsImV4cCI6MjA5MzE0NTc1N30.55qbYCrptzPLJUuDrQdtpTXyObqcWb-fKmoR5vLX3p4';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
@@ -47,8 +47,8 @@ interface DbProfile {
 }
 interface DbTransaction {
   id: string; user_id: string; name: string; amt: number;
-  cat: Category; txn_type: 'exp' | 'inc';
-  display_date: string; txn_timestamp: number; created_at: string;
+  cat: Category; type: 'exp' | 'inc';
+  date: string; txn_timestamp: number; created_at: string;
 }
 interface DbGoal {
   id: string; user_id: string; name: string;
@@ -67,6 +67,7 @@ export const ProfileService = {
     const r = data as DbProfile;
     return {
       id: r.id, name: r.name, email: r.email, avatar: r.avatar,
+      pin: r.pin_hash ?? undefined,
       biometricEnabled: r.biometric_enabled,
       twoFactorEnabled: r.two_factor_enabled,
       createdAt: new Date(r.created_at).getTime(),
@@ -75,6 +76,7 @@ export const ProfileService = {
   async upsert(user: User): Promise<void> {
     const { error } = await supabase.from('profiles').upsert({
       id: user.id, name: user.name, email: user.email, avatar: user.avatar,
+      pin_hash: user.pin ?? null,
       biometric_enabled: user.biometricEnabled,
       two_factor_enabled: user.twoFactorEnabled,
     });
@@ -97,14 +99,14 @@ export const TransactionService = {
     if (error) throw error;
     return (data as DbTransaction[]).map(r => ({
       id: r.id, name: r.name, amt: r.amt, cat: r.cat,
-      type: r.txn_type, date: r.display_date, timestamp: r.txn_timestamp,
+      type: r.type, date: r.date, timestamp: r.txn_timestamp,
     }));
   },
   async insert(userId: string, txn: Transaction): Promise<void> {
     const { error } = await supabase.from('transactions').insert({
       id: txn.id, user_id: userId, name: txn.name, amt: txn.amt,
-      cat: txn.cat, txn_type: txn.type,
-      display_date: txn.date, txn_timestamp: txn.timestamp,
+      cat: txn.cat, type: txn.type,
+      date: txn.date, txn_timestamp: txn.timestamp,
     });
     if (error) throw error;
   },
@@ -119,7 +121,7 @@ export const TransactionService = {
         payload => {
           const r = payload.new as DbTransaction;
           onInsert({ id: r.id, name: r.name, amt: r.amt, cat: r.cat,
-            type: r.txn_type, date: r.display_date, timestamp: r.txn_timestamp });
+            type: r.type, date: r.date, timestamp: r.txn_timestamp });
         })
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` },

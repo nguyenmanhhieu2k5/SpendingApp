@@ -19,8 +19,8 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
+    shouldShowBanner: true,  // ← thêm
+    shouldShowList: true,    // ← thêm
   }),
 });
 
@@ -41,12 +41,12 @@ async function scheduleDaily(hour: number, minute: number = 0): Promise<string |
         sound: true,
         data: { type: 'daily_reminder' },
       },
-     trigger: {
-  type: Notifications.SchedulableTriggerInputTypes.DAILY,
-  hour: 20,
-  minute: 0,
+      trigger: {
+  type: 'daily',  // ← thêm
+  hour,
+  minute,
   repeats: true,
-}as Notifications.DailyTriggerInput,
+} as Notifications.DailyTriggerInput,
     });
     return id;
   } catch {
@@ -179,7 +179,9 @@ export function NotificationsScreen({ navigation }: { navigation: Nav }) {
 
       <FlatList
         data={listData}
-        keyExtractor={(item, i) => String(i)}
+        keyExtractor={(item) =>
+  item.type === 'settings' ? 'settings-block' : item.data.id
+}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ padding: 16, gap: 8 }}
         renderItem={({ item }) => {

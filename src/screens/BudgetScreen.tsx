@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { GoalsScreen } from './GoalsScreen';
 import { useApp } from '../context/AppContext';
 import { COLORS, CAT_CONFIG } from '../utils/constants';
 import { formatVND, formatShort } from '../utils/helpers';
@@ -10,6 +11,7 @@ const CATS: Category[] = ['food', 'move', 'shop', 'health', 'fun', 'other'];
 
 export function BudgetScreen() {
   const { state, setBudget } = useApp();
+  const [activeTab, setActiveTab] = useState<'budget' | 'goals'>('budget');
 
   const safeAmt = (v: any): number => (typeof v === 'number' && !isNaN(v) ? v : 0);
 
@@ -41,8 +43,32 @@ export function BudgetScreen() {
     Alert.alert('✅ Đã lưu', 'Ngân sách đã cập nhật');
   }
 
+  if (activeTab === 'goals') {
+    return (
+      <View style={{ flex: 1 }}>
+        <View style={s.tabSwitch}>
+          <TouchableOpacity style={s.switchBtn} onPress={() => setActiveTab('budget')}>
+            <Text style={s.switchTxtInactive}>💰 Ngân sách</Text>
+          </TouchableOpacity>
+          <View style={s.switchBtnActive}>
+            <Text style={s.switchTxtActive}>🏆 Mục tiêu</Text>
+          </View>
+        </View>
+        <GoalsScreen />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={s.screen} showsVerticalScrollIndicator={false}>
+      <View style={s.tabSwitch}>
+        <View style={s.switchBtnActive}>
+          <Text style={s.switchTxtActive}>💰 Ngân sách</Text>
+        </View>
+        <TouchableOpacity style={s.switchBtn} onPress={() => setActiveTab('goals')}>
+          <Text style={s.switchTxtInactive}>🏆 Mục tiêu</Text>
+        </TouchableOpacity>
+      </View>
       <View style={s.hdr}>
         <Text style={s.hdrTtl}>Ngân sách</Text>
         <Text style={s.hdrSub}>
@@ -125,6 +151,21 @@ export function BudgetScreen() {
 }
 
 const s = StyleSheet.create({
+  tabSwitch: {
+    flexDirection: 'row', backgroundColor: '#fff',
+    marginHorizontal: 16, marginTop: 16, borderRadius: 14,
+    padding: 4, shadowColor: '#000', shadowOpacity: 0.06,
+    shadowRadius: 6, elevation: 2,
+  },
+  switchBtnActive: {
+    flex: 1, backgroundColor: COLORS.primary,
+    borderRadius: 11, paddingVertical: 9, alignItems: 'center',
+  },
+  switchBtn: {
+    flex: 1, paddingVertical: 9, alignItems: 'center',
+  },
+  switchTxtActive:   { fontSize: 13, fontWeight: '700', color: '#fff' },
+  switchTxtInactive: { fontSize: 13, fontWeight: '500', color: '#aaa' },
   screen: { flex: 1, backgroundColor: COLORS.bg },
   hdr: { backgroundColor: COLORS.dark, padding: 20, paddingTop: 56, paddingBottom: 28 },
   hdrTtl: { fontSize: 22, fontWeight: '700', color: '#fff' },

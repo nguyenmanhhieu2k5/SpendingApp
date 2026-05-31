@@ -148,4 +148,4 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.primaryLight, marginBottom: 6,
   },
   tabIcoAddOn: { backgroundColor: COLORS.primary },
-});
+}); 

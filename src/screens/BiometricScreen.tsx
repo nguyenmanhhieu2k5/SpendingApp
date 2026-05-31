@@ -61,9 +61,9 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: `Xác nhận để bật ${info.label}`,
-        fallbackLabel: 'Dùng mã PIN',
         cancelLabel: 'Huỷ',
-        disableDeviceFallback: false,
+        fallbackLabel: '',
+      disableDeviceFallback: false,
       });
       if (result.success) {
         dispatch({ type: 'UPDATE_USER', payload: { biometricEnabled: true } });
@@ -97,8 +97,9 @@ export function BiometricScreen({ navigation }: { navigation: Nav }) {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Thử xác thực sinh trắc học',
-        fallbackLabel: 'Dùng mã PIN',
         cancelLabel: 'Huỷ',
+        fallbackLabel: '',
+      disableDeviceFallback: false,
       });
       Alert.alert(
         result.success ? '✅ Thành công' : '❌ Thất bại',
